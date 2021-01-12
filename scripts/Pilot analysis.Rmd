@@ -1,0 +1,32 @@
+---
+title: "Pilot Analysis_Exp5"
+author: "Mrudula"
+date: "1/12/2021"
+output: html_document
+---
+
+This is the data analysis  for Experiment 5 with a visual search display and manipulating saliency using the position of the target number on the salient/non salient distractor
+
+```{r}
+library(tidyverse)
+library(plyr)
+library(ez)
+library(schoRsch)
+library(knitr)
+library(pander)
+library(rmarkdown)
+library(lme4)
+library(reshape2)
+library(Hmisc)
+
+library(here)
+set_here()
+
+p1 <- read.csv("Data/Pilot_hiwi/pilot1.csv")
+table(p1$TargetPosition)
+table(p1$PosMatch)
+
+table(p1$Validity,p1$Block)
+
+```
+
