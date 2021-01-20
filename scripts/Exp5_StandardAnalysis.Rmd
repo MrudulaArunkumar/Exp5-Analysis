@@ -1,0 +1,560 @@
+---
+title: "Exp5:Standard Analysis"
+author: "Mrudula"
+date: "18th Jan 2021"
+output: html_document
+---
+
+#### This is the analysis of Experiment 5 to test for overshadowing effects in a contingency learning paradigm. This is a new paradigm that incorporates a visual search display with 8 stimuli presented in a circular way. The distractor display consists of 8 letters where 7 of them are in the same colour and one is in red acting as a salient distractor. The target display consisters of eight numbers where one of it will be 5 or an 8. Saliency is manipulated here by presenting this target number either in the same position of the salient word or at the position of the non salient word. All trials are learn trials wherein there is always a distractor display with the salient word
+
+Loading the relevant libraries and dataframe
+
+```{r libload, include=FALSE}
+library(tidyverse)
+library(plyr)
+library(ez)
+library(schoRsch)
+library(knitr)
+library(pander)
+library(rmarkdown)
+library(reshape2)
+library(here)
+library(ggpubr)
+#library(lme4)
+#library(Hmisc)
+
+Exp5data <- read.csv(here("Data", "Prolific", "Exp5_fulldataset.csv"))
+
+
+```
+
+
+### Data cleaning and Preparation
+
+  - Removing unwanted columns
+  - Splitting the RT column to eliminate the first key in case of inaccurate trials 
+  - creating a Column showing Accuracy and Error Rate
+
+```{r prepcleanse, include=FALSE}
+#removing unnecessary columns
+Exp5data <- Exp5data %>%
+  select(-X,-ConsentKey.keys,-ConsentKey.rt,-Begin.keys,-Begin.rt,-checkresp.corr,-checkresp.keys,-checkresp.rt,-Attention.thisRepN,-Attention.thisTrialN,-Attention.thisN,-Attention.thisIndex,-Attention.ran,-AttnQuestion,-AttnAnswer,-NextStep.keys,-NextStep.rt,-InstRep.ran,-InstRep.thisN,-InstRep.thisTrialN,-InstRep.thisRepN,-InstRep.thisIndex,-PracProceed.keys,-PracProceed.rt,-Prac_loop.thisRepN,-Prac_loop.thisTrialN,-Prac_loop.thisN,-Prac_loop.thisIndex,-Prac_loop.ran,-Exp_proceed.keys,-Exp_proceed.rt,-PracRepeat.ran,-PracRepeat.thisRepN,-PracRepeat.thisN,-PracRepeat.thisIndex,-PracRepeat.thisTrialN,-brkContinue.keys,-PauseResp.keys,-PauseResp.rt,-blocks.thisRepN,-blocks.thisTrialN,-blocks.thisIndex,-blocks.ran,-CA_Proceed.keys,-CA_Proceed.rt,-headstartLearn.thisRepN,-headstartLearn.thisTrialN,-headstartLearn.thisIndex,-headstartLearn.thisN,-headstartLearn.ran,-ExpTrials.ran,-ExpTrials.thisIndex,-CA_trials.thisRepN,-CA_trials.thisN,-CA_trials.thisIndex,-CA_trials.thisTrialN,-CA_trials.ran,-AwareQ_loop.thisRepN,-AwareQ_loop.ran,-AwareQ_loop.thisIndex,-AwareQ_loop.thisTrialN,-todebrief.keys,-Finalend.keys)
+
+
+Exp5data <- Exp5data%>%group_by(participant)%>%fill(Screen_bg,.direction = "down")
+
+Exp5data <- Exp5data %>% group_by(participant)%>%fill(blocks.thisN,.direction = "up")
+
+#adjusting RT
+Exp5data <- separate(Exp5data, col = TargetResp.rt, into = c("RT_Trials", "RT_secondary"), sep = ',')
+Exp5data$RT_Trials <- Exp5data$RT_Trials%>%
+  str_replace_all("\\[|\\]","")%>%
+  as.double(Exp5data$RT_Trials)
+Exp5data$RT_Trials <- 1000*(Exp5data$RT_Trials)
+
+###creating a separate df with the contingency awareness
+Exp5_CA <- Exp5data%>%
+ filter(Block == "ContingencyCheck" | str_detect(AwareQ, "response"))
+Exp5data <- Exp5data%>%drop_na(RT_Trials)
+
+Exp5data$ACC_trials <- Exp5data$TargetResp.corr
+Exp5data$ErrorRate <- 1 - Exp5data$ACC_trials
+
+```
+
+### Descriptives
+
+Summary of the overall Reaction Time, accuracy and Error Rate
+
+```{r}
+pander(summary(Exp5data$RT_Trials), style = 'rmarkdown',caption = 'Mean RT')
+pander(table(Exp5data$ACC_trials),style = 'rmarkdown',caption = "Accuracy")
+
+pander(round(table(Exp5data$ACC_trials)/nrow(Exp5data)*100, digits = 3), style = 'rmarkdown', caption = "Percentage of errors")
+```
+
+Removing outliers and farouts
+
+```{r exclusions, echo=FALSE}
+Exp5data$RT_Trials[Exp5data$ACC_trials==0] <- NA
+
+
+#creating function to remove the outliers and farouts
+computeTukeys <- function(x){
+  P25 <- quantile(x$RT_Trials, .25, na.rm = TRUE, type = 6) #type = 6 -> used in SPSS
+  P75 <- quantile(x$RT_Trials, .75, na.rm = TRUE, type = 6)
+  x$Outlier <- P75 + 1.5*(P75 - P25)
+  x$Farouts <- P75 + 3.0*(P75 - P25)
+  return(x)
+}
+
+
+#identifying the outliers and farouts at individual level
+Exp5data <- ddply(Exp5data, .(participant), computeTukeys)
+
+#creating new column with RT trials after removing outliers/farouts
+Exp5data$RT_ifo <- Exp5data$RT_Trials
+Exp5data$RT_io <- Exp5data$RT_Trials
+sum(is.na(Exp5data$RT_Trials))
+Exp5data$RT_ifo[Exp5data$RT_ifo > Exp5data$Farouts|Exp5data$RT_ifo < 300] <- NA
+sum(is.na(Exp5data$RT_ifo))
+Exp5data$RT_io[Exp5data$RT_io > Exp5data$Outlier|Exp5data$RT_io < 300] <- NA
+sum(is.na(Exp5data$RT_io))
+
+pander(summary(Exp5data$RT_ifo), style = 'rmarkdown', caption = "Summary of RT after removing Farouts")
+pander(summary(Exp5data$RT_io), style = 'rmarkdown', caption = "Summary of RT after removing Outliers")
+
+```
+
+## Analysis 
+
+### 1. validity effect
+
+#### Farouts
+
+Comparing the difference between valid trials and invalid trials shows an unexpected trend where the invalid trials are faster than valid trials.
+
+```{r val, echo=FALSE, warning=FALSE, message=FALSE}
+Exp5agg_validity <- aggregate(data = Exp5data,RT_ifo~participant+Validity,mean)
+
+# #checking after removing errorneous pps
+# Exp5agg_validity <- Exp5agg_validity %>%
+#   filter(participant%notin%pER)
+
+anova_V_agg <- ezANOVA(data = Exp5agg_validity,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_V_agg, style = "rmarkdown", caption = "ANOVa table for all trials with validity as factor",split.table = Inf, missing = NA)
+
+ezPlot(data = Exp5agg_validity,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(Validity),
+       x = Validity, levels =  list(Validity = list(new_order = c('valid', 'invalid'))),do_bars = FALSE)+
+  theme_classic()+ylim(950,1050)+
+  ggtitle("Mean RT per condition for valid and invalid trials")
+```
+
+Here is the validity effect per participant
+
+```{r echo=FALSE}
+##wide format
+
+Exp5agg_val_wide <- spread(Exp5agg_validity, Validity,RT_ifo)
+Exp5agg_val_wide$ValEffect <- Exp5agg_val_wide$invalid - Exp5agg_val_wide$valid
+Exp5agg_val_wide$participant <- as.factor(Exp5agg_val_wide$participant)
+ggplot(data = Exp5agg_val_wide, aes(x = participant, y = ValEffect))+
+  geom_bar(stat = "identity", fill = "darkslateblue")+
+  theme_classic()+ylab("Validity Effect (invalid - valid)")+
+  ggtitle("Validity Effect (invalid - valid) across learn trials in each participant")
+```
+
+There are a decent amount of participants who show the trend of doing invalid trials faster than valid trials. Now to check how it looks with outliers exclusion
+
+#### Outliers
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+## Outliers
+Exp5agg_validity_o <- aggregate(data = Exp5data,RT_io~participant+Validity,mean)
+
+# ##removing error PPs
+# Exp5agg_validity_o <- Exp5agg_validity_o %>%
+#   filter(participant%notin%pER)
+
+anova_V_agg_o <- ezANOVA(data = Exp5agg_validity_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_V_agg_o, style = "rmarkdown", caption = "ANOVa table for all trials(outliers excluded) with validity as factor",split.table = Inf, missing = NA)
+
+ezPlot(data = Exp5agg_validity_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(Validity),
+       x = Validity, levels =  list(Validity = list(new_order = c('valid', 'invalid'))), do_bars = FALSE)+
+  theme_classic()+ylim(950,1050)+
+  ggtitle("Mean RT per condition for valid and invalid trials")
+```
+
+TO check how it is per participant:
+
+```{r echo=FALSE}
+Exp5agg_val_wide_o <- spread(Exp5agg_validity_o, Validity,RT_io)
+Exp5agg_val_wide_o$ValEffect <- Exp5agg_val_wide_o$invalid - Exp5agg_val_wide_o$valid
+Exp5agg_val_wide_o$participant <- as.factor(Exp5agg_val_wide_o$participant)
+ggplot(data = Exp5agg_val_wide_o, aes(x = participant, y = ValEffect))+
+  geom_bar(stat = "identity", fill = "darkslateblue")+
+  theme_classic()+ylab("Validity Effect (invalid-valid)")+
+  ggtitle("Validity Effect (invalid - valid) across learn trials(outliers excluded) in each participant")
+
+```
+   
+   Participant 26 has a very strange trend, so excluding that participant alone to check for difference in data trends did not have any big impact except make the validity effect weaker. Considering both farouts and outliers, participants 6,26,33,49 were removed which resulted in valid and invalid trials to be very alike.
+   
+
+```{r include=FALSE}
+# Exp5agg_validity <- Exp5agg_validity %>%
+#   subset(participant!= "26" & participant != "49" & participant != "6" & participant != "33")
+
+```
+
+### 2. Saliency main effect 
+
+There is a huge main effect of position OF target (salient vs non-salient): F(1,39) = 40.13, p <.001
+The difference is approximately 200ms meaning salient trials are 200ms faster than trials where the number appeared in the non salient position
+
+```{r salfo, echo=FALSE, warning=FALSE}
+Exp5agg_Saliency <- aggregate(data = Exp5data,RT_ifo~participant+PosMatch,mean)
+
+
+anova_S_agg <- ezANOVA(data = Exp5agg_Saliency,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_S_agg, style = "rmarkdown", caption = "ANOVa table for all trials with Position Match with saliency as factor",split.table = Inf, missing = NA)
+
+ezPlot(data = Exp5agg_Saliency,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch),
+       x = PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+  theme_classic()+ylim(800,1300)+
+  ggtitle("Mean RT per condition for salient and nonsalient trials")
+
+##wide format
+
+Exp5agg_sal_wide <- spread(Exp5agg_Saliency, PosMatch,RT_ifo)
+Exp5agg_sal_wide$SalEffect <- Exp5agg_sal_wide$NonSalient - Exp5agg_sal_wide$Salient
+Exp5agg_sal_wide$participant <- as.factor(Exp5agg_sal_wide$participant)
+ggplot(data = Exp5agg_sal_wide, aes(x = participant, y = SalEffect))+
+  geom_bar(stat = "identity", fill = "darkslateblue")+
+  theme_classic()+
+  ggtitle("Saliency Effect (nonsalient - salient) across all trials in each participant")
+```
+
+Considering the farouts, few participants show almost no saliency effect and one in the other direction. Namely participant 9,24,31,39,45.
+
+Now to look at the outlier exclusion there is a huge main effect F(1,39) = 39.1, p <.001, No the difference between salient and non salient trials being 100 ms
+
+```{r saliency, echo=FALSE, warning=FALSE}
+Exp5agg_Saliency_o <- aggregate(data = Exp5data,RT_io~participant+PosMatch,mean)
+
+
+anova_S_agg_o <- ezANOVA(data = Exp5agg_Saliency_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_S_agg_o, style = "rmarkdown", caption = "ANOVa table for all trials with Position Match with saliency as factor",split.table = Inf, missing = NA)
+
+ezPlot(data = Exp5agg_Saliency_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch),
+       x = PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+  theme_classic()+ylim(800,1300)+
+  ggtitle("Mean RT per condition for salient and nonsalient trials")
+
+##wide format
+
+Exp5agg_sal_wide_o <- spread(Exp5agg_Saliency_o, PosMatch,RT_io)
+Exp5agg_sal_wide_o$SalEffect <- Exp5agg_sal_wide_o$NonSalient - Exp5agg_sal_wide_o$Salient
+Exp5agg_sal_wide_o$participant <- as.factor(Exp5agg_sal_wide_o$participant)
+ggplot(data = Exp5agg_sal_wide_o, aes(x = participant, y = SalEffect))+
+  geom_bar(stat = "identity", fill = "darkslateblue")+
+  theme_classic()+
+  ggtitle("Saliency Effect (nonsalient - saliency) across all trials in each participant")
+```
+
+while looking at the data after exclusing outliers, some participants show a different trend in saliency where nonsalient trials are faster or do not differ so much: like participant 13,24,26,31,34,39,45,47.
+
+We were curious to see whether this would impact the results and selected the participants with these unexpected trends
+Exploring data after removing these participants
+
+```{r include=FALSE}
+pSal <- c(13,24,31,39,45,47)
+
+
+```
+
+### 3. Validity and Target position as a factor of Saliency
+
+Comparing the difference in RTs for trials where target matched the salient distractor vs non salient distractors across valid and invalid trials
+
+####    - Farouts
+
+There is a huge main effect of Position F(1,39) = 32.6, p <.001, indicating that the saliency manipulation worked and in the expected direction where the trials with position of target in the salient distractor position compared to non salient distractor position (> 200 ms)
+There is also a highly significant interaction between position and validity F(1,39) = 7.32, p <.05 however it seems reversed for the non salient position where the invalid trials are faster than valid trials. But for salient position valid trials are faster than invalid but this difference is not as big as the difference in non salient position which is probably why main effect of validity is not significant.
+  
+  If we remove the particpiants who did not show an expected saliency effect then,the statistical effects are still identical to the one where all the participants were included with the exception that the Validity effect in the salient position further reduced. 
+  
+```{r valsal, echo=FALSE, warning=FALSE, message=FALSE}
+Exp5_VS_agg_fo <- aggregate(data = Exp5data,RT_ifo~participant+Validity+PosMatch,mean)
+
+#removing the participants with almost no existing saliency effect from line 345
+# '%notin%' <- Negate('%in%')
+# Exp5_VS_agg_fo <- Exp5_VS_agg_fo %>%
+#   filter(participant%notin%pSal)
+
+#removing Error pps
+
+# Exp5_VS_agg_fo <- Exp5_VS_agg_fo %>%
+#   filter(participant%notin%pER)
+
+#anova
+anova_VS_fo <- ezANOVA(data = Exp5_VS_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        detailed = TRUE)
+
+pander(anova_VS_fo, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+
+
+ezPlot(data = Exp5_VS_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        split = Validity, x=PosMatch,levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+        theme_classic()+ylim(800,1200)+
+        ggtitle("Mean RT for valid and \n invalid trials across saliency")
+
+```
+
+This shows the validity effect only in the trials where the target matched the salient position: T-test
+The difference is around 10ms
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Exp5data_sal <- Exp5data %>%
+  filter(PosMatch == "Salient")
+Exp5_VoS_agg_fo <- aggregate(data = Exp5data_sal,RT_ifo~participant+Validity,mean)
+
+t.test(RT_ifo~Validity, data = Exp5_VoS_agg_fo, paired=TRUE)
+```
+
+####    - Outliers
+
+The results are similar to the farouts
+
+```{r valsalo, echo=FALSE, warning=FALSE, message=FALSE}
+
+Exp5_VS_agg_o <- aggregate(data = Exp5data,RT_io~participant+Validity+PosMatch,mean)
+
+#anova
+anova_VS_o <- ezANOVA(data = Exp5_VS_agg_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        detailed = TRUE)
+
+pander(anova_VS_o, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+
+
+ezPlot(data = Exp5_VS_agg_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        split = Validity, x=PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+        theme_classic()+
+        ggtitle("Mean RT for valid and \n invalid trials across saliency")
+
+```
+
+Exploring the mean difference of valid and invalid trials separately for salient and non salient position
+
+```{r meanvaleffect, echo=FALSE, warning=FALSE, message=FALSE}
+Exp5agg_VS_fo_wide <- dcast(data = Exp5_VS_agg_fo, participant~Validity+PosMatch, value.var =  "RT_ifo")
+
+Exp5agg_VS_fo_wide$ValEffect_Salient <- Exp5agg_VS_fo_wide$invalid_Salient- Exp5agg_VS_fo_wide$valid_Salient
+
+Exp5agg_VS_fo_wide$ValEffect_NonSalient <- Exp5agg_VS_fo_wide$invalid_NonSalient- Exp5agg_VS_fo_wide$valid_NonSalient
+
+Exp5agg_VS_fo_wide$participant <- as.factor(Exp5agg_VS_fo_wide$participant)
+m1 <- ggplot(Exp5agg_VS_fo_wide, aes(x=participant, y = ValEffect_Salient,fill=participant))+
+  geom_bar(stat = "identity")+theme_classic()+theme(legend.position = "none")
+
+
+m2 <- ggplot(Exp5agg_VS_fo_wide, aes(x=participant, y = ValEffect_NonSalient, fill=participant))+
+  geom_bar(stat = "identity")+theme_classic()+theme(legend.position = "none")
+
+m <- ggarrange(m1,m2,nrow=2)
+m
+```
+
+So basically the faster invalid trials result from the nonsalient trials where the target is in the position of the non salient letter. However when it is in the salient letter's position the valid trials are faster than invalid but not fast enough to have a validity effect in the expected direction.
+
+
+### Error Rate
+
+While including all participants there is a main effect of Position Match however the other effects are not significant (the interaction is almost significant).
+Then the participants who did more than 15% errors were excluded.
+
+```{r errorrate, echo=FALSE, warning=FALSE, message=FALSE}
+Exp5agg_ER <- aggregate(data = Exp5data, ErrorRate~participant+Validity+PosMatch,mean)
+
+#seeing those participants with higher ER
+pER <- ifelse(Exp5agg_ER$ErrorRate > 0.15,Exp5agg_ER$participant,NA)
+pER <- as.data.frame(pER)
+pER <- pER%>%drop_na(pER)
+pER <- c(7,12,31,42,49)
+
+# Exp5agg_ER <- Exp5agg_ER %>%
+#   filter(participant%notin%pER)
+
+anova_ER <- ezANOVA(data = Exp5agg_ER,
+        dv = ErrorRate,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_ER, style = 'rmarkdown', caption = "ANOVA results: ErrorRates in test trials", split.table = "Inf", missing = NA)
+
+ezPlot(data = Exp5agg_ER,
+        dv = ErrorRate,
+        wid = participant,
+        within = .(PosMatch,Validity),
+       split = Validity, x = PosMatch, do_bars = FALSE)
+```
+
+Removing the participants with more errors from the standard analysis did not change the trend of the data. 
+
+### Contingency Awareness
+
+This part of analysis involves looking at the data concerning the awareness guessing trtials and the questionnaire. 
+
+```{r include=FALSE}
+#data clearning and prep
+
+Exp5_CA <- Exp5_CA %>%
+  select(-TargetResp_p.corr,-TargetResp_p.keys,-TargetResp_p.rt,-TargetResp.corr,-TargetResp.keys,-todebrief.rt,-Finalend.rt)
+Exp5_CA$AwareResp.corr <- as.factor(Exp5_CA$AwareResp.corr)
+Exp5_CA$AwareResp.keys <- as.character(Exp5_CA$AwareResp.keys)
+Exp5_CA$Solution <- as.character(Exp5_CA$Solution)
+Exp5_CA$Solution <- ifelse(Exp5_CA$Solution == "5","e",ifelse(Exp5_CA$Solution == "8","u",Exp5_CA$Solution))
+Exp5_CA$AwarenessAccuracy <- ifelse(Exp5_CA$AwareResp.keys == Exp5_CA$Solution,1,0)
+
+Exp5_CA$SalTotalAcc <- NA
+Exp5_CA$NonSalTotalAcc <- NA
+
+Exp5_CA <- Exp5_CA %>%
+  mutate(SalTotalAcc = ifelse(PosMatch == "Salient" & CAResponse.corr == 1, 1, 0))
+
+Exp5_CA <- Exp5_CA %>%
+  mutate(NonSalTotalAcc = ifelse(PosMatch == "NonSalient" & CAResponse.corr == 1, 1, 0))
+
+CA_Summary <- Exp5_CA %>%
+  dplyr::group_by(participant) %>%
+  dplyr::summarise(TotalCA_Acc = sum(CAResponse.corr, na.rm=TRUE),
+                   MeanAcc = mean(CAResponse.corr, na.rm=TRUE),
+                  SalAcc = sum(SalTotalAcc, na.rm = TRUE),
+                  NonSalAcc = sum(NonSalTotalAcc, na.rm = TRUE))
+CA_Summary$participant <- as.factor(CA_Summary$participant)
+
+```
+
+Below are the Scores of the participants in the Contingency Task. Red indicates number of Accurate Salient trials, blue indicates accuracy of nonsalient trials and the dark pink/purple is the count of both salient and non salient trials.  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(CA_Summary, aes(x=participant, y = TotalCA_Acc))+
+  geom_bar(stat = "identity", fill = "palegreen4")+
+  theme_classic()+
+  ggtitle("Accuracy of Awareness trials per participants")
+
+ggplot(CA_Summary, aes(x = participant))+
+  geom_bar(aes(y=SalAcc),stat = "identity",fill="coral2",group="SalAcc")+
+  geom_bar(aes(y=NonSalAcc), stat = "identity",fill="cornflowerblue",group = "NonSalAcc",alpha = 0.5)+
+  labs(x = "Participant", y = "TotalAcc_Sal+NonSal", fill = "legend")+
+  scale_fill_manual(values = c("SalAcc", "NonSalAcc"))+
+  ggtitle("Summary of Contingency Awareness scores")
+```
+
+These show the scores from the guessing trials where some participants only got Salient position ones correct and some both salient and non salient positions. 
+The next part of awareness report analysis is from the questionnaire where the participants answer a set of 5 questions as follows:
+
+    1.Did you have an impression that certain response appeared after a red letter? Press 'y' for yes and 'n' for no and 't' if you do not know.
+    2.What response almost always followed a red "V"? Press the relevant response key ("e" or "u") on the keyboard or press "t" if you do not know.
+    3.What response almost always followed a red "G"? Press the relevant response key ("e" or "u") on the keyboard or press "t" if you do not know.
+    4.What response almost always followed "L"?  Press the relevant response key ("e" or "u") on the keyboard or press "t" if you do not know.
+    5.What response almost always followed "X"? Press the relevant response key ("e" or "u") on the keyboard or press "t" if you do not know.
+
+Now we aggregate the responses from these questions and evaluate it by combining question 2 and 3 that refer to salient distractors and 4 and 5 refer to non salient distractors
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+AWarepp <- aggregate(data = Exp5_CA, AwarenessAccuracy~participant+AwareQ_loop.thisN,mean)
+AWarepp$Dicho <- ifelse(AWarepp$AwareQ_loop.thisN == "1" & AWarepp$AwarenessAccuracy == 1 | AWarepp$AwareQ_loop.thisN == "2" & AWarepp$AwarenessAccuracy == "1",1,0)
+
+pander(table(AWarepp$AwareQ_loop.thisN,AWarepp$AwarenessAccuracy), style = "rmarkdown", title = "Question number and the number of participants answering accuratelye (1) or not (0)")
+table(AWarepp$Dicho)
+
+A_Summary <- AWarepp %>%
+  dplyr::group_by(participant) %>%
+  dplyr::summarise(SaliencyAware = sum(Dicho, na.rm=TRUE))
+
+A_Summary$allSalAware <- ifelse(A_Summary$SaliencyAware == "2" ,1,0)
+
+```
+
+Now we merge the participantID of those who were aware of both the salient letter-response associations with the aggregate dataframe used for analysis of the interaction effect. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#merging these with main agg df
+Exp5_VSA_agg_fo <- merge(Exp5_VS_agg_fo,A_Summary,by="participant")
+
+
+#anova
+anova_VSA_fo <- ezANOVA(data = Exp5_VSA_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        between = .(allSalAware),
+        detailed = TRUE)
+
+pander(anova_VSA_fo, style = 'rmarkdown', caption = "ANOVA results with awareness: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+Exp5_VSA_agg_fo$allSalAware <- as.factor(Exp5_VSA_agg_fo$allSalAware)
+
+ezPlot(data = Exp5_VSA_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+       between = .(allSalAware),
+        split = Validity, x=PosMatch, row = allSalAware,levels =  list(PosMatch = list (new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+        theme_classic()+
+        ggtitle("Mean RT for valid and \n invalid trials across saliency and amaong participants who have awareness vs those who do not")
+
+```
+
+It can be seen that the validity effect for salient position is higher when participants are aware of the association between salient letter and the response (~39ms) and it amounts to almost the same difference but in the opposite side for non salient position (~ -37ms)
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Exp5SalAware_agg <- subset(Exp5_VSA_agg_fo,subset = allSalAware == 1)
+
+anova_S_fo <- ezANOVA(data = Exp5SalAware_agg,
+        dv = RT_ifo,
+        wid = participant,
+        within_full = .(PosMatch,Validity),
+        within = .(PosMatch),
+        diff=.(Validity),
+        reverse_diff = TRUE,
+        detailed = TRUE)
+
+pander(anova_S_fo, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+
+ezStats(data = Exp5SalAware_agg,
+        dv = RT_ifo,
+        wid = participant,
+        within_full = .(PosMatch,Validity),
+        within = .(PosMatch),
+        diff=.(Validity),
+        reverse_diff = TRUE)
+
+
+```
+

@@ -7,7 +7,7 @@ output: html_document
 
 This is the data analysis  for Experiment 5 with a visual search display and manipulating saliency using the position of the target number on the salient/non salient distractor
 
-```{r}
+```{r include=FALSE}
 library(tidyverse)
 library(plyr)
 library(ez)
@@ -20,13 +20,191 @@ library(reshape2)
 library(Hmisc)
 
 library(here)
-set_here()
+#set_here()
 
-p1 <- read.csv("Data/Pilot_hiwi/pilot1.csv")
-table(p1$TargetPosition)
-table(p1$PosMatch)
+#p1 <- read.csv(here("Data","Pilot_hiwi","pilot1.csv"))
+p2 <- read.csv(here("Data","Pilot_hiwi","pilot2.csv"))
+p3 <- read.csv(here("Data","Pilot_hiwi","pilot3.csv"))
+p4 <- read.csv(here("Data","Pilot_hiwi","pilot4.csv"))
+p5 <- read.csv(here("Data","Pilot_hiwi","pilot5.csv"))
 
-table(p1$Validity,p1$Block)
+pilotdata <- rbind.fill(p2,p3,p4,p5)
 
+
+
+
+```
+
+Removing unnecessary columns 
+
+```{r datacleaning, include=FALSE}
+pilotdata <- pilotdata %>%
+  select(-ConsentKey.keys,-ConsentKey.rt,-Begin.keys,-Begin.rt,-checkresp.corr,-checkresp.keys,-checkresp.rt,-Attention.thisRepN,-Attention.thisTrialN,-Attention.thisN,-Attention.thisIndex,-Attention.ran,-AttnQuestion,-AttnAnswer,-NextStep.keys,-NextStep.rt,-InstRep.ran,-InstRep.thisTrialN,-InstRep.thisRepN,-InstRep.thisIndex,-PracProceed.keys,-PracProceed.rt,-Prac_loop.thisRepN,-Prac_loop.thisTrialN,-Prac_loop.thisN,-Prac_loop.thisIndex,-Prac_loop.ran,-Exp_proceed.keys,-Exp_proceed.rt,-PracRepeat.ran,-PracRepeat.thisRepN,-PracRepeat.thisN,-PracRepeat.thisIndex,-PracRepeat.thisTrialN,-brkContinue.keys,-PauseResp.keys,-PauseResp.rt,-blocks.thisRepN,-blocks.thisTrialN,-blocks.thisIndex,-blocks.ran,-CA_Proceed.keys,-CA_Proceed.rt)
+
+pilotdata <- pilotdata %>%
+  select(-InstRep.thisN)
+
+pilotdata <- pilotdata%>%group_by(participant)%>%fill(Screen_bg,.direction = "down")
+
+pilotdata <- pilotdata %>% group_by(participant)%>%fill(blocks.thisN,.direction = "up")
+
+#adjusting RT
+pilotdata <- separate(pilotdata, col = TargetResp.rt, into = c("RT_Trials", "RT_secondary"), sep = ',')
+pilotdata$RT_Trials <- pilotdata$RT_Trials%>%
+  str_replace_all("\\[|\\]","")%>%
+  as.double(pilotdata$RT_Trials)
+pilotdata$RT_Trials <- 1000*(pilotdata$RT_Trials)
+
+###creating a separate df with the contingency awareness
+Exp5pilot_CA <- pilotdata%>%
+ filter(Block == "ContingencyCheck" | str_detect(AwareQ, "response"))
+pilotdata <- pilotdata%>%drop_na(RT_Trials)
+
+pilotdata$ACC_trials <- pilotdata$TargetResp.corr
+pilotdata$ErrorRate <- 1 - pilotdata$ACC_trials
+
+pilotdata <- pilotdata %>%
+  select(-headstartLearn.thisRepN,-headstartLearn.thisTrialN,-headstartLearn.thisIndex,-headstartLearn.thisN,-headstartLearn.ran,-ExpTrials.ran,-ExpTrials.thisIndex,-CA_trials.thisRepN,-CA_trials.thisN,-CA_trials.thisIndex,-CA_trials.thisTrialN,-CA_trials.ran,-AwareQ_loop.thisRepN,-AwareQ_loop.ran,-AwareQ_loop.thisIndex,-AwareQ_loop.thisN,-AwareQ_loop.thisTrialN,-todebrief.keys,-Finalend.keys)
+
+```
+
+Descriptives
+
+```{r}
+pander(summary(pilotdata$RT_Trials), style = 'rmarkdown',caption = 'Mean RT')
+pander(table(pilotdata$ACC_trials),style = 'rmarkdown',caption = "Accuracy")
+
+pander(round(table(pilotdata$ACC_trials)/nrow(pilotdata)*100, digits = 3), style = 'rmarkdown', caption = "Percentage of errors")
+```
+Exclusion of outliers and farouts
+
+```{r exclusions, echo=FALSE}
+
+pilotdata$RT_Trials[pilotdata$ACC_trials==0] <- NA
+
+
+#creating function to remove the outliers and farouts
+computeTukeys <- function(x){
+  P25 <- quantile(x$RT_Trials, .25, na.rm = TRUE, type = 6) #type = 6 -> used in SPSS
+  P75 <- quantile(x$RT_Trials, .75, na.rm = TRUE, type = 6)
+  x$Outlier <- P75 + 1.5*(P75 - P25)
+  x$Farouts <- P75 + 3.0*(P75 - P25)
+  return(x)
+}
+
+
+#identifying the outliers and farouts at individual level
+pilotdata <- ddply(pilotdata, .(participant), computeTukeys)
+
+#creating new column with RT trials after removing outliers/farouts
+pilotdata$RT_ifo <- pilotdata$RT_Trials
+pilotdata$RT_io <- pilotdata$RT_Trials
+sum(is.na(pilotdata$RT_Trials))
+pilotdata$RT_ifo[pilotdata$RT_ifo > pilotdata$Farouts|pilotdata$RT_ifo < 300] <- NA
+sum(is.na(pilotdata$RT_ifo))
+pilotdata$RT_io[pilotdata$RT_io > pilotdata$Outlier|pilotdata$RT_io < 300] <- NA
+sum(is.na(pilotdata$RT_io))
+
+pander(summary(pilotdata$RT_ifo), style = 'rmarkdown', caption = "Summary of RT after removing Farouts")
+pander(summary(pilotdata$RT_io), style = 'rmarkdown', caption = "Summary of RT after removing Outliers")
+
+```
+Standard Analysis
+
+1. Validity effect 
+
+```{r warning=FALSE, message=FALSE}
+pilot5agg_validity <- aggregate(data = pilotdata,RT_ifo~participant+Validity,mean)
+
+
+anova_V_agg <- ezANOVA(data = pilot5agg_validity,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_V_agg, style = "rmarkdown", caption = "ANOVa table for all trials with validity and condition as factors",split.table = Inf, missing = NA)
+
+ezPlot(data = pilot5agg_validity,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(Validity),
+       x = Validity, do_bars = FALSE)+
+  theme_classic()+
+  ggtitle("Mean RT per condition for valid and invalid trials")
+```
+
+
+2. Validity x Saliency interaction
+
+```{r warning=FALSE, message=FALSE}
+#aggregate
+Exp5pilot_VS_agg_fo <- aggregate(data = pilotdata,RT_ifo~participant+Validity+PosMatch,mean)
+
+#anova
+anova_VS_fo <- ezANOVA(data = Exp5pilot_VS_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        detailed = TRUE)
+
+pander(anova_VS_fo, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+
+
+ezPlot(data = Exp5pilot_VS_agg_fo,
+        dv = RT_ifo,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        split = Validity, x=PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+        theme_classic()+
+        ggtitle("Mean RT for valid and \n invalid trials across saliency")
+```
+Outliers
+
+```{r warning=FALSE, message=FALSE}
+#aggregate
+Exp5pilot_VS_agg_o <- aggregate(data = pilotdata,RT_io~participant+Validity+PosMatch,mean)
+
+#anova
+anova_VS_o <- ezANOVA(data = Exp5pilot_VS_agg_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        detailed = TRUE)
+
+pander(anova_VS_o, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
+
+
+ezPlot(data = Exp5pilot_VS_agg_o,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        split = Validity, x=PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+        theme_classic()+ylim(700,1200)+
+        ggtitle("Mean RT for valid and \n invalid trials across saliency")
+
+
+```
+Finding the mean difference between valid and invalid trials across participants
+
+```{r echo=FALSE, warning=FALSE}
+Exp5pilot_agg_fo_wide <- dcast(data = Exp5pilot_VS_agg_fo, participant~Validity+PosMatch, value.var =  "RT_ifo")
+
+Exp5pilot_agg_fo_wide$ValEffect_Salient <- Exp5pilot_agg_fo_wide$invalid_Salient- Exp5pilot_agg_fo_wide$valid_Salient
+
+Exp5pilot_agg_fo_wide$ValEffect_NonSalient <- Exp5pilot_agg_fo_wide$invalid_NonSalient- Exp5pilot_agg_fo_wide$valid_NonSalient
+
+Exp5pilot_agg_fo_wide$participant <- as.factor(Exp5pilot_agg_fo_wide$participant)
+m1 <- ggplot(Exp5pilot_agg_fo_wide, aes(x=participant, y = ValEffect_Salient, fill = participant))+
+  geom_bar(stat = "identity")+theme_classic()+scale_fill_brewer(palette = "Dark2")
+m1
+m2 <- ggplot(Exp5pilot_agg_fo_wide, aes(x=participant, y = ValEffect_NonSalient, fill = participant))+
+  geom_bar(stat = "identity")+theme_classic()+scale_fill_brewer(palette = "Dark2")
+m2
+
+
+library(ggpubr)
+m <- ggarrange(m1,m2,ncol=2)
+m
 ```
 
