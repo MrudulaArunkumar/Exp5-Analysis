@@ -228,6 +228,12 @@ ezPlot(data = Exp5agg_Saliency,
   theme_classic()+ylim(800,1300)+
   ggtitle("Mean RT per condition for salient and nonsalient trials")
 
+sal <- ggplot(Exp5agg_Saliency, aes(x=PosMa, y=RT_ifo,color = Validity))+
+   geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+ylim(500,600)+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency")
+
 ##wide format
 
 Exp5agg_sal_wide <- spread(Exp5agg_Saliency, PosMatch,RT_ifo)
@@ -246,6 +252,7 @@ Now to look at the outlier exclusion there is a huge main effect F(1,39) = 39.1,
 ```{r saliency, echo=FALSE, warning=FALSE}
 Exp5agg_Saliency_o <- aggregate(data = Exp5data,RT_io~participant+PosMatch,mean)
 
+pander(t.test(data = Exp5agg_Saliency_o, RT_io~PosMatch, paired = TRUE))
 
 anova_S_agg_o <- ezANOVA(data = Exp5agg_Saliency_o,
         dv = RT_io,
@@ -262,6 +269,12 @@ ezPlot(data = Exp5agg_Saliency_o,
        x = PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
   theme_classic()+ylim(800,1300)+
   ggtitle("Mean RT per condition for salient and nonsalient trials")
+
+sal <- ggplot(Exp5agg_Saliency_o, aes(x=PosMatch, y=RT_io, fill = PosMatch))+
+   geom_bar(size = 1,stat = "summary", fun = "mean")+
+  scale_fill_manual(values = c("deepskyblue4","cadetblue3"))+scale_color_manual(values = c("deepskyblue4","cadetblue3"))+xlab("Target Position")+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency")
+ggsave(filename = here("Figures","salmaineffect.png"),sal)
 
 ##wide format
 
@@ -297,7 +310,7 @@ There is also a highly significant interaction between position and validity F(1
   If we remove the particpiants who did not show an expected saliency effect then,the statistical effects are still identical to the one where all the participants were included with the exception that the Validity effect in the salient position further reduced. 
   
 ```{r valsal, echo=FALSE, warning=FALSE, message=FALSE}
-Exp5_VS_agg_fo <- aggregate(data = Exp5data,RT_ifo~participant+Validity+PosMatch,mean)
+Exp5_VS_agg_fo <- aggregate(data = Exp5data,RT_ifo~participant+Validity+PosMatch+blocks.thisN,mean)
 
 #removing the participants with almost no existing saliency effect from line 345
 # '%notin%' <- Negate('%in%')
@@ -326,6 +339,8 @@ ezPlot(data = Exp5_VS_agg_fo,
         split = Validity, x=PosMatch,levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
         theme_classic()+ylim(800,1200)+
         ggtitle("Mean RT for valid and \n invalid trials across saliency")
+
+
 
 meanVS_fo <- ezStats(data = Exp5_VS_agg_fo,
         dv = RT_ifo,
@@ -367,7 +382,7 @@ anova_VS_o <- ezANOVA(data = Exp5_VS_agg_o,
         detailed = TRUE)
 
 pander(anova_VS_o, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for test trials",split.table = "Inf", missing = NA)
-
+anova_out(anova_VS_o)
 
 ezPlot(data = Exp5_VS_agg_o,
         dv = RT_io,
@@ -376,6 +391,14 @@ ezPlot(data = Exp5_VS_agg_o,
         split = Validity, x=PosMatch, levels =  list(PosMatch = list(new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
         theme_classic()+
         ggtitle("Mean RT for valid and \n invalid trials across saliency")
+
+interPV <- ggplot(Exp5_VS_agg_o, aes(x=PosMatch, y=RT_io,color = Validity))+
+     geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+     geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+coord_cartesian(ylim = c(800,1300))+
+   scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+   theme_classic()+ylab("ReactionTime (in ms)")+xlab("Target Position")+ggtitle("Interaction of Validity and Saliency")
+
+ggsave(filename = here("Figures", "interVP.png"),interPV)
 
 meanVS_o <- ezStats(data = Exp5_VS_agg_o,
         dv = RT_io,
@@ -529,27 +552,33 @@ Now we merge the participantID of those who were aware of both the salient lette
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 #merging these with main agg df
 Exp5_VSA_agg_fo <- merge(Exp5_VS_agg_fo,A_Summary,by="participant")
-
+Exp5_VSA_agg_o <- merge(Exp5_VS_agg_o,A_Summary,by="participant")
 
 #anova
-anova_VSA_fo <- ezANOVA(data = Exp5_VSA_agg_fo,
-        dv = RT_ifo,
+anova_VSA_o <- ezANOVA(data = Exp5_VSA_agg_o,
+        dv = RT_io,
         wid = participant,
         within = .(PosMatch,Validity),
         between = .(allSalAware),
         detailed = TRUE)
 
-pander(anova_VSA_fo, style = 'rmarkdown', caption = "ANOVA results with awareness: Farouts excluded",split.table = "Inf", missing = NA)
-Exp5_VSA_agg_fo$allSalAware <- as.factor(Exp5_VSA_agg_fo$allSalAware)
+pander(anova_VSA_o, style = 'rmarkdown', caption = "ANOVA results with awareness: Farouts excluded",split.table = "Inf", missing = NA)
+Exp5_VSA_agg_o$allSalAware <- as.factor(Exp5_VSA_agg_o$allSalAware)
 
-ezPlot(data = Exp5_VSA_agg_fo,
-        dv = RT_ifo,
+ezPlot(data = Exp5_VSA_agg_o,
+        dv = RT_io,
         wid = participant,
         within = .(PosMatch,Validity),
        between = .(allSalAware),
         split = Validity, x=PosMatch, row = allSalAware,levels =  list(PosMatch = list (new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
         theme_classic()+
         ggtitle("Mean RT for valid and \n invalid trials across saliency and amaong participants who have awareness vs those who do not")
+
+interPVA <- ggplot(Exp5_VSA_agg_o, aes(x=Saliency, y=RT_io,color = Validity))+
+     geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+     geom_point(stat = "summary", fun = "mean", aes(shape = Validity))
+   scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+   theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency")
 
 ```
 
@@ -558,16 +587,28 @@ It can be seen that the validity effect for salient position is higher when part
 #### While analyzing only participants with awareness
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-Exp5SalAware_agg <- subset(Exp5_VSA_agg_fo,subset = allSalAware == 1)
+Exp5SalAware_agg <- subset(Exp5_VSA_agg_o,subset = allSalAware == 1)
 
 anova_S_fo <- ezANOVA(data = Exp5SalAware_agg,
-        dv = RT_ifo,
+        dv = RT_io,
         wid = participant,
         within = .(PosMatch,Validity),
+        
         # within = .(PosMatch),
         # diff=.(Validity),
         # reverse_diff = TRUE,
         detailed = TRUE)
+
+ezPlot(data = Exp5SalAware_agg,
+        dv = RT_io,
+        wid = participant,
+        within = .(PosMatch,Validity),
+        
+        # within = .(PosMatch),
+        # diff=.(Validity),
+        # reverse_diff = TRUE,
+       split = Validity, x=PosMatch,levels =  list(PosMatch = list (new_order = c('Salient', 'NonSalient'))), do_bars = FALSE)+
+theme_classic()
 
 pander(anova_S_fo, style = 'rmarkdown', caption = "ANOVA results: Farouts excluded for participants with awareness",split.table = "Inf", missing = NA)
 
